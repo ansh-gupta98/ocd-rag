@@ -3,17 +3,17 @@ uvicorn==0.30.6
 python-dotenv==1.0.1
 pydantic==2.8.2
 
-# LangChain stack
+# HuggingFace Inference API (no local model download)
+huggingface-hub==0.24.7
+requests==2.32.3
+
+# LangChain — core only
 langchain==0.3.0
 langchain-community==0.3.0
-langchain-huggingface==0.1.0
 langchain-text-splitters==0.3.0
 
-# HuggingFace
-huggingface-hub==0.24.7
+# Embeddings — runs locally but tiny (~90MB)
 sentence-transformers==3.1.0
-transformers==4.44.2
-torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
 
 # Vector store
 faiss-cpu==1.8.0
