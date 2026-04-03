@@ -120,27 +120,52 @@ def _hf_chat(system: str, user: str) -> str:
 
 def _hf_embed(texts: List[str]) -> np.ndarray:
     """
-    Call HF feature-extraction endpoint to get embeddings.
-    Returns float32 array of shape (len(texts), dim).
-    Batches in groups of 32 to stay within HF payload limits.
+    Call HF Inference API for embeddings.
+    Tries the new /models/ endpoint first, falls back to legacy /pipeline/.
+    Batches in groups of 32 to stay within payload limits.
     """
     headers = {"Authorization": f"Bearer {_hf_token}", "Content-Type": "application/json"}
-    url     = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{HF_EMBED_MODEL}"
-    all_vecs = []
+
+    # New endpoint (2024+): https://api-inference.huggingface.co/models/<model>
+    # Payload: {"inputs": ["text1", "text2"]}
+    primary_url = f"https://api-inference.huggingface.co/models/{HF_EMBED_MODEL}"
+    # Legacy fallback (some models still use this)
+    legacy_url  = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{HF_EMBED_MODEL}"
+
+    all_vecs: List[np.ndarray] = []
 
     for i in range(0, len(texts), 32):
         batch = texts[i:i + 32]
-        resp  = requests.post(url, headers=headers, json={"inputs": batch, "options": {"wait_for_model": True}}, timeout=60)
-        resp.raise_for_status()
-        raw = resp.json()
-        # HF returns list[list[float]] or list[list[list[float]]] (CLS token pool)
+        raw   = None
+
+        for url in (primary_url, legacy_url):
+            try:
+                resp = requests.post(
+                    url, headers=headers,
+                    json={"inputs": batch, "options": {"wait_for_model": True}},
+                    timeout=60,
+                )
+                if resp.status_code in (404, 410):
+                    continue          # try next URL
+                resp.raise_for_status()
+                raw = resp.json()
+                break
+            except requests.exceptions.HTTPError:
+                continue
+
+        if raw is None:
+            raise RuntimeError(
+                f"HF embedding API unavailable for model '{HF_EMBED_MODEL}'. "
+                "Check your HUGGINGFACEHUB_API_TOKEN and HF_EMBED_MODEL variable."
+            )
+
         vecs = []
         for item in raw:
-            if isinstance(item[0], list):   # token-level → mean pool
-                arr = np.mean(item, axis=0)
+            # HF may return list[float] or list[list[float]] (token-level → mean pool)
+            if isinstance(item, list) and isinstance(item[0], list):
+                arr = np.mean(np.array(item, dtype="float32"), axis=0)
             else:
                 arr = np.array(item, dtype="float32")
-            # L2 normalise for cosine similarity
             norm = np.linalg.norm(arr)
             vecs.append(arr / norm if norm > 0 else arr)
         all_vecs.extend(vecs)
